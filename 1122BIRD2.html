@@ -9777,24 +9777,43 @@ if ((isRaining || timeOfDay >= 1) && Math.random() < 0.4) { // 40% chance to see
                                 // Handle feeding baby birds with improved behavior
                                 if (this.target.baby && babyBirds.indexOf(this.target.baby) !== -1) {
                                     // Feed the baby bird
+                                    // FIX: Feed baby - check if bird has a worm
                                     this.target.baby.feed();
-                                    this.hunger += 20; // Feeding costs energy
-                                    
-                                    // Visual effect for feeding (could be flapping, etc)
+
+                                    if (this.carryingWorm) {
+                                        // Bird fed a worm to baby! Less energy cost
+                                        this.hunger += 10;
+                                        this.carryingWorm = false;
+                                        debugLog(`Bird fed baby a WORM at (${this.target.x}, ${this.target.y})! 🐛`);
+
+                                        // Special worm feeding effect (bigger, different color)
+                                        specialEffects.push({
+                                            x: this.target.baby.x,
+                                            y: this.target.baby.y - 15,
+                                            type: 'worm-feeding',
+                                            timer: 0,
+                                            duration: 1500,
+                                            emoji: '🐛'
+                                        });
+                                    } else {
+                                        // Normal feeding costs more energy
+                                        this.hunger += 20;
+                                        debugLog(`Bird fed baby at (${this.target.x}, ${this.target.y})`);
+
+                                        // Normal feeding effect
+                                        specialEffects.push({
+                                            x: this.target.baby.x,
+                                            y: this.target.baby.y - 10,
+                                            type: 'feeding',
+                                            timer: 0,
+                                            duration: 1000
+                                        });
+                                    }
+
+                                    // Visual effect for feeding
                                     this.pecking = true;
                                     this.peckTimer = 0;
-                                    
-                                    // Create a small animation effect
-                                    specialEffects.push({
-                                        x: this.target.baby.x,
-                                        y: this.target.baby.y - 10,
-                                        type: 'feeding',
-                                        timer: 0,
-                                        duration: 1000
-                                    });
-                                    
-                                    debugLog(`Bird fed baby at (${this.target.x}, ${this.target.y})`);
-                                    
+
                                     // After feeding, possibly stay to feed more or look for more food
                                     if (Math.random() < 0.3 && this.hunger < 150) {
                                         // Stay with the baby a bit longer
@@ -11171,11 +11190,30 @@ if (this.pathIndex >= this.path.length) {
             for (let i = worms.length - 1; i >= 0; i--) {
                 const worm = worms[i];
                 if (distance(this.x, this.y, worm.x, worm.y) < hopFoodRadius) {
-                    worms.splice(i, 1);
-                    this.hunger = Math.max(0, this.hunger - 150);
-                    foundFood = true;
-                    debugLog(`Bird found and ate worm while hopping.`);
-                    break;
+                    // FIX: Check if bird has hungry babies - if so, collect worm instead of eating it
+                    const hasHungryBaby = !this.isWild && babyBirds.some(baby =>
+                        baby.timeSinceLastMeal > 15 &&
+                        (baby.associatedNest === this.myNest || !baby.associatedNest)
+                    );
+
+                    if (hasHungryBaby && !this.carryingWorm) {
+                        // Pick up worm to bring to baby
+                        worms.splice(i, 1);
+                        this.carryingWorm = true;
+                        foundFood = true;
+                        debugLog(`Bird picked up worm to feed baby!`);
+
+                        // Immediately go find baby to feed
+                        this.findBabyBirds();
+                        break;
+                    } else {
+                        // Eat worm for self
+                        worms.splice(i, 1);
+                        this.hunger = Math.max(0, this.hunger - 150);
+                        foundFood = true;
+                        debugLog(`Bird found and ate worm while hopping.`);
+                        break;
+                    }
                 }
             }
         }
@@ -14971,14 +15009,59 @@ function drawSpecialEffects(deltaTime) {
                 // Food disappearing into hill
                 const foodProgress = effect.timer / effect.duration;
                 const foodFade = 1 - foodProgress;
-                
+
                 // Shrinking food particle
                 ctx.fillStyle = `rgba(210, 180, 140, ${foodFade})`;
                 const foodSize = 3 * (1 - foodProgress);
-                
+
                 ctx.beginPath();
                 ctx.arc(effect.x, effect.y, foodSize, 0, Math.PI * 2);
                 ctx.fill();
+                break;
+
+            case 'feeding':
+                // Normal feeding effect - small hearts
+                const feedProgress = effect.timer / effect.duration;
+                const feedOpacity = feedProgress < 0.3 ? feedProgress / 0.3 :
+                                   (feedProgress > 0.7 ? (1 - feedProgress) / 0.3 : 1);
+
+                ctx.save();
+                ctx.globalAlpha = feedOpacity;
+                ctx.fillStyle = '#FF6B9D'; // Pink heart color
+
+                // Draw small heart floating up
+                const heartY = effect.y - (feedProgress * 20);
+                ctx.font = '14px Arial';
+                ctx.fillText('❤', effect.x - 7, heartY);
+                ctx.restore();
+                break;
+
+            case 'worm-feeding':
+                // Worm feeding effect - show worm emoji
+                const wormProgress = effect.timer / effect.duration;
+                const wormOpacity = wormProgress < 0.3 ? wormProgress / 0.3 :
+                                   (wormProgress > 0.7 ? (1 - wormProgress) / 0.3 : 1);
+
+                ctx.save();
+                ctx.globalAlpha = wormOpacity;
+
+                // Draw worm emoji floating up with scale animation
+                const wormY = effect.y - (wormProgress * 25);
+                const wormScale = 1 + Math.sin(wormProgress * Math.PI) * 0.3;
+                ctx.font = `${Math.floor(16 * wormScale)}px Arial`;
+                ctx.fillText('🐛', effect.x - 8, wormY);
+
+                // Add sparkle effect around worm
+                ctx.fillStyle = `rgba(255, 255, 100, ${wormOpacity * 0.6})`;
+                for (let i = 0; i < 4; i++) {
+                    const angle = (i / 4) * Math.PI * 2 + wormProgress * Math.PI * 4;
+                    const sparkX = effect.x + Math.cos(angle) * 12;
+                    const sparkY = wormY + Math.sin(angle) * 12;
+                    ctx.beginPath();
+                    ctx.arc(sparkX, sparkY, 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                ctx.restore();
                 break;
         }
     } // <-- This closes the for loop
