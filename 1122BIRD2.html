@@ -4540,24 +4540,22 @@ document.addEventListener('visibilitychange', function() {
                 // Koi positions are relative to pond center, will auto-update based on pond position
 
                 nests.forEach(nest => {
-            // If nest has an associated tree, adjust position relative to tree
+            // FIX: Use stored offsets for proper nest positioning during resize
             if (nest.tree && trees.includes(nest.tree)) {
-                // Use the direct tree reference instead of searching
                 const tree = nest.tree;
-                
-                // Scale x-position relative to tree's x-scale
-                nest.x = tree.x + (nest.x - (tree.x / scaleX)) * scaleX;
-                
-                // Maintain fixed position at 80% up the tree trunk
-                nest.y = tree.y - tree.trunkHeight * 0.8 * tree.scale;
+
+                // Recalculate position based on stored offset and height ratio
+                nest.x = tree.x + nest.offsetX; // Apply stored horizontal offset
+                nest.y = tree.y - tree.trunkHeight * nest.heightRatio * tree.scale; // Use stored height ratio
             } else {
                 // No valid tree association, scale normally
                 nest.x *= scaleX;
                 nest.y *= scaleY;
-                
+
                 // Clear invalid tree reference
                 if (nest.tree && !trees.includes(nest.tree)) {
                     nest.tree = null;
+                    nest.offsetX = 0;
                 }
             }
         });
@@ -5635,6 +5633,16 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
                 this.treeId = tree ? tree.id : null; // Store tree ID for resize tracking
                 this.x = x;
                 this.y = y;
+
+                // FIX: Store offset from tree for proper resizing
+                if (tree) {
+                    this.offsetX = x - tree.x; // Store horizontal offset from tree center
+                    this.heightRatio = 0.8; // Store as ratio instead of absolute (80% up the trunk)
+                } else {
+                    this.offsetX = 0;
+                    this.heightRatio = 0.8;
+                }
+
                 this.materialsCollected = 0;
                 this.isComplete = false;
                 this.occupiedBy = null;
