@@ -3659,8 +3659,9 @@ wasRaining = true; // Set flag when rain just stopped
 rainsCompleted++;
 debugLog(`Rain event completed. Total rains: ${rainsCompleted}`);
 
-// After 5 rains, spawn a permanent pond
-if (rainsCompleted >= 5 && ponds.length === 0) {
+// FIX: VERY RARE pond generation when it rains too much
+// Only 10% chance after 8+ rains, and only if no pond exists yet
+if (rainsCompleted >= 8 && ponds.length === 0 && Math.random() < 0.10) {
     const pondX = 100 + Math.random() * (canvas.width - 200);
     const pondWidth = 100 + Math.random() * 60;
     const pondHeight = 50 + Math.random() * 30;
@@ -3675,10 +3676,10 @@ if (rainsCompleted >= 5 && ponds.length === 0) {
         ripples: []
     });
 
-    debugLog(`Natural pond formed after ${rainsCompleted} rains at (${pondX}, ${pondY})`);
+    debugLog(`RARE: Natural pond formed after ${rainsCompleted} rains from heavy rainfall at (${pondX}, ${pondY})`);
 
     // Add diary entry for pond milestone
-    addDiaryEntry("A pond has formed in the garden! Koi and frogs move in.", 'milestone');
+    addDiaryEntry("The heavy rains have created a pond! Koi and frogs move in.", 'milestone');
 
     // Spawn a couple of koi in the pond
     // Traditional koi colors for variety
@@ -9358,8 +9359,8 @@ if ((isRaining || timeOfDay >= 1) && Math.random() < 0.4) { // 40% chance to see
                                 break;
                             }
 
-                            // CHECK FOR BATHING FIRST:
-                            if (puddles.length > 0 && Math.random() < 0.4) { // 40% chance to bathe if puddles exist
+                            // FIX: CHECK FOR BATHING FIRST - check both puddles and ponds:
+                            if ((puddles.length > 0 || ponds.length > 0) && Math.random() < 0.4) { // 40% chance to bathe if water exists
                                 this.findPuddle();
                             }
 
@@ -10370,47 +10371,64 @@ if ((isRaining || timeOfDay >= 1) && Math.random() < 0.4) { // 40% chance to see
                         break;
 
                     case BIRD_STATES.BATHING:
-                        // Check if there are still puddles
-                        if (puddles.length === 0) {
+                        // FIX: Check for both puddles AND ponds
+                        if (puddles.length === 0 && ponds.length === 0) {
                             this.state = BIRD_STATES.FLYING;
                             this.stateTimer = 0;
                             break;
                         }
-                        
-                        // Find nearest puddle
-                        let nearestPuddle = null;
+
+                        // Find nearest water source (puddle or pond)
+                        let nearestWater = null;
                         let minDist = Infinity;
+                        let waterType = null;
+
+                        // Check puddles
                         for (const puddle of puddles) {
                             const dist = distance(this.x, this.y, puddle.x, puddle.y);
                             if (dist < minDist) {
                                 minDist = dist;
-                                nearestPuddle = puddle;
+                                nearestWater = puddle;
+                                waterType = 'puddle';
                             }
                         }
-                        
-                        if (!nearestPuddle || minDist > 50) {
-                            // No puddle nearby, find one
+
+                        // Check ponds (prefer closer ponds)
+                        for (const pond of ponds) {
+                            const dist = distance(this.x, this.y, pond.x, pond.y);
+                            if (dist < minDist) {
+                                minDist = dist;
+                                nearestWater = pond;
+                                waterType = 'pond';
+                            }
+                        }
+
+                        if (!nearestWater || minDist > 50) {
+                            // No water nearby, find one
                             this.findPuddle();
                             break;
                         }
-                        
-                        // If already at puddle
-                        if (minDist < 15) {
+
+                        // If already at water source
+                        const bathingRadius = waterType === 'pond' ? 25 : 15; // Larger radius for ponds
+                        if (minDist < bathingRadius) {
                             // Bathing behavior - animated fluttering
                             this.velocity.x *= 0.5;
                             this.velocity.y *= 0.5;
                             
                             // Splashing motions
                             if (Math.random() < 0.2) {
-                                // Add ripple to puddle
-                                nearestPuddle.ripples.push({
-                                    size: 2,
-                                    maxSize: 5 + Math.random() * 8,
-                                    speed: 0.1 + Math.random() * 0.1
-                                });
-                                
+                                // FIX: Add ripple to water source (puddle or pond)
+                                if (nearestWater.ripples) { // Check if it has ripples array
+                                    nearestWater.ripples.push({
+                                        size: 2,
+                                        maxSize: 5 + Math.random() * 8,
+                                        speed: 0.1 + Math.random() * 0.1
+                                    });
+                                }
+
                                 // Random motion
-                                this.applyForce({ 
+                                this.applyForce({
                                     x: (Math.random() - 0.5) * 0.1,
                                     y: (Math.random() - 0.5) * 0.05
                                 });
@@ -10424,22 +10442,22 @@ if ((isRaining || timeOfDay >= 1) && Math.random() < 0.4) { // 40% chance to see
                                 this.isOnGround = Math.abs(this.y - (canvas.height * GROUND_HEIGHT_RATIO)) < (30 * getResponsiveScale());
                             }
                         } else {
-                            // Move toward puddle
-                            const dx = nearestPuddle.x - this.x;
-                            const dy = nearestPuddle.y - this.y;
+                            // FIX: Move toward water source (puddle or pond)
+                            const dx = nearestWater.x - this.x;
+                            const dy = nearestWater.y - this.y;
                             const dir = normalize(dx, dy);
-                            
-                            this.applyForce({ 
-                                x: dir.x * 0.01, 
-                                y: dir.y * 0.01 
+
+                            this.applyForce({
+                                x: dir.x * 0.01,
+                                y: dir.y * 0.01
                             });
-                            
+
                             // Face direction of movement
                             if (Math.abs(dx) > 2) {
                                 this.direction = dx > 0 ? 1 : -1;
                             }
-                            
-                            // If taking too long to reach puddle, give up
+
+                            // If taking too long to reach water, give up
                             if (this.stateTimer > 5000) {
                                 this.state = BIRD_STATES.FLYING;
                                 this.stateTimer = 0;
