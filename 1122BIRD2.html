@@ -1383,6 +1383,14 @@ function checkOwlWindChimeDelivery() {
 
                     windChimeOwlDelivered = true;
                     windChimeEnabled = true; // Auto-enable
+
+                    // FIX: Initialize audio and start playing wind chimes
+                    if (!audioContext) {
+                        initializeAudio();
+                    }
+                    lastWindChimeTime = 0; // Reset to trigger immediate chime
+                    playWindChimes(); // Start the wind chime playback loop
+
                     this.isDeliveringChimes = false;
 
                     // Add diary entry for wind chime delivery (check BEFORE resetting flags)
@@ -11041,11 +11049,26 @@ if (this.pathIndex >= this.path.length) {
             }
         }
         
+        // FIX: Check if bird is very hungry - should stop hopping and actively seek food
+        if (this.hunger > 500 && this.stateTimer > 5000) { // Very hungry (50%+) and hopped for at least 5 seconds
+            // Find nearest food source
+            const nearestFood = this.findNearestFood();
+            if (nearestFood) {
+                // Transition to feeding state to actively pursue food
+                this.state = BIRD_STATES.FEEDING;
+                this.stateTimer = 0;
+                this.targetFood = nearestFood;
+                this.hopData = null;
+                debugLog(`Hungry bird exiting hopping state to seek food`);
+                break;
+            }
+        }
+
         // Check for threats while hopping - allow state to be interrupted for safety
-        const nearbyRat = rats.find(rat => 
+        const nearbyRat = rats.find(rat =>
             distance(this.x, this.y, rat.x, rat.y) < 50
         );
-        
+
         if (nearbyRat) {
             // Flee from rat
             this.flee(nearbyRat.x, nearbyRat.y);
@@ -11054,7 +11077,7 @@ if (this.pathIndex >= this.path.length) {
             break;
         }
     }
-    
+
     // V40: Only exit hopping after FULL duration (no early exits for maximum chill)
     if (this.stateTimer > BIRD_STATE_DURATION.HOPPING && (!this.hopData || this.hopData.phase === "ground")) {
         // ONLY exit when on ground AND full time elapsed
@@ -11719,25 +11742,23 @@ ctx.stroke();
                 // Reset acceleration each frame
                 this.acceleration = { x: 0, y: 0 };
                 
-                // Rats are scared of birds nearby
-                const nearbyBird = birds.find(bird => 
-                    distance(this.x, this.y, bird.x, bird.y) < 50
-                );
-                
-                if (nearbyBird && !this.isRatKing) {
-                    // Run away from bird
-                    this.state = 'fleeing';
-                    this.stateTimer = 0;
-                    
-                    const fleeDirection = this.x < nearbyBird.x ? -1 : 1;
-                    this.direction = fleeDirection;
-                    
-                    this.applyForce({ 
-                        x: this.direction * 0.04, 
-                        y: 0 
-                    });
+                // FIX: Only check for birds and enter fleeing state if not already fleeing
+                if (this.state !== 'fleeing') {
+                    const nearbyBird = birds.find(bird =>
+                        distance(this.x, this.y, bird.x, bird.y) < 50
+                    );
+
+                    if (nearbyBird && !this.isRatKing) {
+                        // Run away from bird
+                        this.state = 'fleeing';
+                        this.stateTimer = 0;
+
+                        const fleeDirection = this.x < nearbyBird.x ? -1 : 1;
+                        this.direction = fleeDirection;
+                        debugLog(`Rat fleeing from bird at (${nearbyBird.x}, ${nearbyBird.y})`);
+                    }
                 }
-                
+
                 switch (this.state) {
                     case 'wandering':
                         this.wanderTimer += deltaTime;
@@ -11810,7 +11831,29 @@ ctx.stroke();
                             this.state = 'stopped';
                             this.stateTimer = 0;
                         }
-                        
+                        break;
+
+                    case 'fleeing':
+                        // FIX: Add missing fleeing state case
+                        // Move away from threat quickly
+                        this.applyForce({
+                            x: this.direction * 0.04,
+                            y: 0
+                        });
+
+                        // Clamp to ground level
+                        const groundBase = canvas.height * GROUND_HEIGHT_RATIO;
+                        this.y = Math.min(this.y, groundBase + 30);
+
+                        // Return to wandering after fleeing for 3 seconds
+                        if (this.stateTimer > 3000) {
+                            this.state = 'wandering';
+                            this.stateTimer = 0;
+                            debugLog(`Rat stopped fleeing and returned to wandering`);
+                        }
+                        break;
+
+                    case 'stopped':
                         // Leave after a longer while or if off-screen
                         if ((this.wanderTimer > 40000) || // Increased from 20000
                             (this.direction < 0 && this.x < -50) || 
@@ -12124,6 +12167,8 @@ class Squirrel {
         this.targetY = null;
         this.tailWobble = 0;
         this.nutCollected = false;
+        this.lastJumpTime = 0; // Track last jump to prevent loop
+        this.lastJumpTree = null; // Track tree jumped from to avoid immediate return
         this.fleeing = false;
         this.groundY = canvas.height * GROUND_HEIGHT_RATIO;
     }
@@ -12454,13 +12499,17 @@ class Squirrel {
                 }
                 
                 // Check for nearby trees to jump to (branch traversal)
-                // ENHANCED: More frequent jumping (3% chance) and slightly larger distance (120px)
-                if (this.stateTimer > 3000 && Math.random() < 0.03) {
-                    // Look for nearby trees
+                // FIX: Add cooldown (min 15 seconds between jumps) and prevent jumping back to same tree
+                const timeSinceLastJump = Date.now() - this.lastJumpTime;
+                const canJump = this.stateTimer > 5000 && timeSinceLastJump > 15000; // 15 second cooldown
+
+                if (canJump && Math.random() < 0.02) { // Reduced chance from 0.03 to 0.02
+                    // Look for nearby trees (exclude the tree we just came from)
                     const nearbyTrees = trees.filter(tree =>
                         tree !== this.climbingTree &&
-                        Math.abs(tree.x - this.climbingTree.x) < 120 && // Trees within 120px (few inches)
-                        Math.abs((tree.y - tree.trunkHeight * 0.8 * tree.scale) - this.y) < 60 // Similar height (more lenient)
+                        tree !== this.lastJumpTree && // Don't jump back to tree we just came from
+                        Math.abs(tree.x - this.climbingTree.x) < 120 && // Trees within 120px
+                        Math.abs((tree.y - tree.trunkHeight * 0.8 * tree.scale) - this.y) < 60 // Similar height
                     );
 
                     if (nearbyTrees.length > 0) {
@@ -12472,6 +12521,8 @@ class Squirrel {
                         this.jumpStartY = this.y;
                         this.jumpProgress = 0;
                         this.stateTimer = 0;
+                        this.lastJumpTime = Date.now(); // Track jump time
+                        this.lastJumpTree = this.climbingTree; // Remember tree we're leaving
                         debugLog(`Squirrel jumping from tree to nearby tree at (${targetTree.x})`);
                         break;
                     }
@@ -19670,12 +19721,15 @@ function takeScreenshot() {
         
         // Convert canvas to data URL
         const dataUrl = canvas.toDataURL('image/png');
-        
-        // Create a link element to download the image
+
+        // FIX: Create a link element and properly append/remove from DOM for better browser compatibility
         const link = document.createElement('a');
         link.download = `garden-view-${new Date().toISOString().slice(0,10)}.png`;
         link.href = dataUrl;
+        link.style.display = 'none';
+        document.body.appendChild(link); // Append to DOM first
         link.click();
+        document.body.removeChild(link); // Clean up
         
         // Show a message
         const message = document.getElementById('screenshotMessage');
@@ -20102,6 +20156,13 @@ function drawFullScene() {
 
                 // Auto-enable wind chime audio if spawned
                 windChimeEnabled = true;
+
+                // FIX: Initialize audio and start playing wind chimes
+                if (!audioContext) {
+                    initializeAudio();
+                }
+                lastWindChimeTime = 0; // Reset to trigger immediate chime
+                playWindChimes(); // Start the wind chime playback loop
 
                 debugLog(`Initial wind chime spawned on tree at (${randomTree.x})`);
                 addDiaryEntry("Gentle wind chimes hang from a tree, waiting to sing in the breeze.", 'discovery');
@@ -21593,6 +21654,29 @@ canvas.addEventListener('touchstart', (e) => {
             lockedAnimalType = null;
             debugLog(`Unlocked by touching elsewhere (mobile)`);
             return; // Don't scatter food when unlocking
+        }
+
+        // FIX: Check if windchime was touched (mobile support)
+        if (windChimes && windChimes.length > 0) {
+            for (const chime of windChimes) {
+                const chimeDist = Math.sqrt(
+                    Math.pow(scaledX - chime.x, 2) +
+                    Math.pow(scaledY - chime.y, 2)
+                );
+                if (chimeDist < 40) { // 40px touch radius
+                    // Play a quick cascade when touching windchime directly
+                    if (windChimeEnabled && audioContext) {
+                        const notes = ['C', 'D', 'E', 'G']; // 4-note cascade
+                        notes.forEach((note, i) => {
+                            setTimeout(() => {
+                                playNote(note, 3);
+                            }, i * 70);
+                        });
+                    }
+                    debugLog(`Touched windchime at (${chime.x}, ${chime.y}) on mobile`);
+                    return; // Don't scatter food when touching windchime
+                }
+            }
         }
 
         // If didn't click an animal, scatter food
