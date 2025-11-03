@@ -6947,6 +6947,43 @@ function drawWorms() {
                     poop.y += poop.yVelocity * (deltaTime / 16);
                     poop.yVelocity += 0.05 * (deltaTime / 16);
 
+                    // FIX: Check if poop hit another bird before landing on ground
+                    for (const bird of birds) {
+                        const birdDist = distance(poop.x, poop.y, bird.x, bird.y);
+                        if (birdDist < 20 && !poop.hitBird) { // Within 20px of bird
+                            poop.hitBird = true;
+                            poop.grounded = true; // Stop falling
+
+                            // Create emoji conversation between pooper and victim
+                            const poopEmojis = ['💩', '😬', '🙊', '😅', '😳'];
+                            const victimEmojis = ['😡', '😤', '🤬', '😠', '💢'];
+
+                            // Victim reacts angrily
+                            startEmojiConversation(bird, [
+                                { emoji: victimEmojis[Math.floor(Math.random() * victimEmojis.length)], duration: 2000 }
+                            ]);
+
+                            debugLog(`Poop hit bird ${getBirdName(bird)} at (${poop.x}, ${poop.y})!`);
+
+                            // Find who pooped (if still exists and nearby-ish)
+                            const nearbyPooper = birds.find(b =>
+                                b !== bird &&
+                                distance(b.x, b.y, bird.x, bird.y) < 200 &&
+                                b.y < bird.y // Above the victim
+                            );
+
+                            if (nearbyPooper) {
+                                // Pooper reacts embarrassed/apologetic
+                                setTimeout(() => {
+                                    startEmojiConversation(nearbyPooper, [
+                                        { emoji: poopEmojis[Math.floor(Math.random() * poopEmojis.length)], duration: 2000 }
+                                    ]);
+                                }, 500); // Slight delay for natural back-and-forth
+                            }
+                            break;
+                        }
+                    }
+
                     // Check if poop has hit the ground
                     // Enhanced: allow deeper landing in foreground (below ground surface)
                     const groundLevel = canvas.height * GROUND_HEIGHT_RATIO;
@@ -6954,7 +6991,9 @@ function drawWorms() {
                     if (poop.y >= groundLevel + landingDepth) {
                         poop.y = groundLevel + landingDepth;
                         poop.grounded = true;
-                        debugLog(`Poop landed at (${poop.x}, ${poop.y})`);
+                        if (!poop.hitBird) { // Only log if didn't hit a bird
+                            debugLog(`Poop landed at (${poop.x}, ${poop.y})`);
+                        }
                     }
                 }
                 
@@ -15142,26 +15181,56 @@ class Owl {
                 const centerX = canvas.width / 2;
                 const centerY = canvas.height * 0.3;
                 const radius = canvas.width * 0.25;
-                
+
                 // Calculate desired position
                 const targetX = centerX + Math.cos(patrolTime) * radius;
                 const targetY = centerY + Math.sin(patrolTime * 0.5) * 50;
-                
+
               // Move toward that position
 dx = targetX - this.x;         // Just assignment, no const
 dy = targetY - this.y;         // Just assignment, no const
 const dir = normalize(dx, dy); // Keep const for dir - it's only declared once
-                
-                this.applyForce({ 
-                    x: dir.x * 0.01, 
-                    y: dir.y * 0.01 
+
+                this.applyForce({
+                    x: dir.x * 0.01,
+                    y: dir.y * 0.01
                 });
-                
+
                 // Face direction of movement
                 if (Math.abs(dx) > 2) {
                     this.direction = dx > 0 ? 1 : -1;
                 }
-                
+
+                // FIX: Occasionally play wing flap sound while patrolling
+                if (Math.random() < 0.005 && windChimeEnabled && audioContext) { // 0.5% chance per frame (~1-2 times per patrol)
+                    // Play soft wing flap sound (whoosh)
+                    try {
+                        const now = audioContext.currentTime;
+                        const osc = audioContext.createOscillator();
+                        osc.type = 'triangle';
+                        osc.frequency.value = 100; // Low whoosh
+
+                        const gainNode = audioContext.createGain();
+                        gainNode.gain.value = 0;
+
+                        const filter = audioContext.createBiquadFilter();
+                        filter.type = 'lowpass';
+                        filter.frequency.value = 400;
+
+                        osc.connect(filter);
+                        filter.connect(gainNode);
+                        gainNode.connect(audioContext.destination);
+
+                        osc.start(now);
+                        gainNode.gain.setValueAtTime(0, now);
+                        gainNode.gain.linearRampToValueAtTime(0.04, now + 0.03); // Very quiet
+                        gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+                        osc.stop(now + 0.2);
+                    } catch (e) {
+                        // Silent fail for wing flap sound
+                    }
+                }
+
                 // Occasionally look for a new target
                 if (Math.random() < 0.02 && isNight) {
                     this.findTarget();
@@ -17903,10 +17972,10 @@ function spawnOwls() {
                     // Start oscillator
                     osc.start(now);
 
-                    // Hoot envelope - quick attack, short sustain, quick release
+                    // FIX: Reduced hoot volume - was too loud
                     gainNode.gain.setValueAtTime(0, now);
-                    gainNode.gain.linearRampToValueAtTime(0.15, now + 0.05); // Quick attack
-                    gainNode.gain.setValueAtTime(0.15, now + 0.2); // Sustain
+                    gainNode.gain.linearRampToValueAtTime(0.08, now + 0.05); // Quick attack - reduced from 0.15
+                    gainNode.gain.setValueAtTime(0.08, now + 0.2); // Sustain - reduced from 0.15
                     gainNode.gain.linearRampToValueAtTime(0, now + 0.35); // Release
 
                     // Frequency modulation for realistic hoot
