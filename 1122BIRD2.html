@@ -1592,6 +1592,7 @@ const OWL_SPAWN_CHANCE = 0.008; // Base chance per check
 const RAT_KING_OWL_ATTRACTION = 0.2; // Higher chance of owl spawning when rat king present
         let lightningStrikes = [];
         let birds = [];
+        let eggs = []; // NEW: Egg incubation stage before baby birds
         let babyBirds = [];
         let squirrels = [];
         let foodItems = [];
@@ -4579,9 +4580,22 @@ document.addEventListener('visibilitychange', function() {
                     }
                 });
                 
+                // NEW: Handle eggs during resize
+                eggs.forEach(egg => {
+                    egg.x *= scaleX;
+
+                    // If egg has an associated nest, keep it with the nest
+                    if (egg.associatedNest && nests.includes(egg.associatedNest)) {
+                        egg.x = egg.associatedNest.x;
+                        egg.y = egg.associatedNest.y;
+                    } else {
+                        egg.y *= scaleY;
+                    }
+                });
+
                 babyBirds.forEach(baby => {
     baby.x *= scaleX;
-    
+
     // If baby has an associated nest, keep it with the nest
     if (baby.associatedNest && nests.includes(baby.associatedNest)) {
         baby.x = baby.associatedNest.x;
@@ -6232,11 +6246,67 @@ currentHour = Math.floor(((timeOfDay < 1 ? timeOfDay * 12 : 12 + (timeOfDay - 1)
             }
         }
 
+        // NEW: Egg class for incubation stage before baby birds
+        class Egg {
+            constructor(x, y, birdType, nestObj = null) {
+                this.x = x;
+                this.y = y;
+                this.birdType = birdType || BIRD_TYPES[Math.floor(Math.random() * BIRD_TYPES.length)];
+                this.nestObj = nestObj;
+                this.age = 0; // Track age in milliseconds
+                this.hatchTime = (1 + Math.random()) * 86400000; // 1-2 days in milliseconds
+                this.size = 8; // Egg size
+                this.wobbleTimer = Math.random() * Math.PI * 2; // For subtle animation
+                this.color = '#F5F5DC'; // Beige/cream color
+
+                // Track if this egg has a parent sitting on it
+                this.beingIncubated = false;
+                this.associatedNest = nestObj;
+            }
+
+            update(deltaTime) {
+                this.age += deltaTime;
+                this.wobbleTimer += deltaTime * 0.001;
+
+                // Update position to match nest if it has one
+                if (this.associatedNest && this.associatedNest.tree) {
+                    this.x = this.associatedNest.x;
+                    this.y = this.associatedNest.y;
+                }
+
+                // Check if ready to hatch
+                return this.age >= this.hatchTime;
+            }
+
+            draw() {
+                // Draw egg with subtle speckles
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.ellipse(this.x, this.y, this.size * 0.7, this.size, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Add speckles
+                ctx.fillStyle = 'rgba(139, 90, 43, 0.3)';
+                for (let i = 0; i < 3; i++) {
+                    const angle = (i / 3) * Math.PI * 2;
+                    const speckleX = this.x + Math.cos(angle) * this.size * 0.3;
+                    const speckleY = this.y + Math.sin(angle) * this.size * 0.4;
+                    ctx.beginPath();
+                    ctx.arc(speckleX, speckleY, 1, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Subtle wobble near hatching time
+                if (this.age > this.hatchTime * 0.8) {
+                    const wobble = Math.sin(this.wobbleTimer * 4) * 1;
+                    ctx.save();
+                    ctx.translate(wobble, 0);
+                    ctx.restore();
+                }
+            }
+        }
+
         // V26: Enhanced BabyBird class with gentler bobbing
-       
-       
-       
-       
         class BabyBird {
     constructor(x, y, birdType, nestObj = null) {
         this.x = x;
@@ -9924,24 +9994,20 @@ if ((isRaining || timeOfDay >= 1) && Math.random() < 0.4) { // 40% chance to see
                                 // Set this nest as occupied by this bird
                                 this.myNest.occupiedBy = this;
                                 
-                                // Check for baby bird creation
+                                // FIX: Create EGG first, which will hatch after 1-2 days
                                 if (this.myNest.isComplete && this.myNest.readyForBabies) {
-                                    this.myNest.readyForBabies = false; // Prevent multiple babies
-                                    
-                                    this.myNest.lastBabyTime = Date.now(); // Record when baby was born
-                                
-                                    // Create a baby bird
-                                    const baby = new BabyBird(this.myNest.x, this.myNest.y, this.birdType, this.myNest);
-                                    babyBirds.push(baby);
-                                    debugLog(`Baby bird created in nest at (${this.myNest.x}, ${this.myNest.y})`);
+                                    this.myNest.readyForBabies = false; // Prevent multiple eggs
 
-                                    // Register baby in lineage and create diary entry
-                                    const babyName = registerBabyBird(baby, this);
+                                    this.myNest.lastBabyTime = Date.now(); // Record when egg was laid
+
+                                    // Create an EGG instead of baby bird
+                                    const egg = new Egg(this.myNest.x, this.myNest.y, this.birdType, this.myNest);
+                                    eggs.push(egg);
+                                    debugLog(`Egg laid in nest at (${this.myNest.x}, ${this.myNest.y}), will hatch in ${(egg.hatchTime / 86400000).toFixed(1)} days`);
+
+                                    // Create diary entry for egg
                                     const parentName = getBirdName(this);
-                                    addDiaryEntry(`${babyName} was born! Parent: ${parentName}`, 'birth');
-
-                                    // Alert birds to feed the baby with a slight delay
-                                    setTimeout(() => alertBirdsToFeedBaby(baby), 1000);
+                                    addDiaryEntry(`${parentName} laid an egg! It will hatch soon.`, 'birth');
                                     
                                     // Also make parent bird immediately target the baby
                                     if (!this.isWild) {
@@ -19450,6 +19516,29 @@ drawAnts();
         }
     }
     
+    // NEW: Update and draw eggs (hatch into baby birds after 1-2 days)
+    for (let i = eggs.length - 1; i >= 0; i--) {
+        const egg = eggs[i];
+        const readyToHatch = egg.update(deltaTime);
+
+        if (readyToHatch) {
+            // EGG HATCHES! Create baby bird
+            const baby = new BabyBird(egg.x, egg.y, egg.birdType, egg.associatedNest);
+            babyBirds.push(baby);
+
+            // Remove the egg
+            eggs.splice(i, 1);
+
+            debugLog(`Egg hatched into baby bird at (${baby.x}, ${baby.y})!`);
+            addDiaryEntry(`An egg has hatched! A new baby bird joins the garden.`, 'birth');
+
+            // Alert birds to feed the new baby
+            setTimeout(() => alertBirdsToFeedBaby(baby), 1000);
+        } else {
+            egg.draw();
+        }
+    }
+
     // Update and draw baby birds
     for (let i = babyBirds.length - 1; i >= 0; i--) {
         const remove = babyBirds[i].update(deltaTime);
